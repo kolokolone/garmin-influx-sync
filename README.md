@@ -2,7 +2,8 @@
 
 Small Docker service that pulls recent Garmin Connect health metrics through
 Garmin's official **Personal API** and writes them to **InfluxDB 2.x** for
-Grafana. It is a recent-window sync, not a full Garmin archive.
+Grafana. It polls recent days and can backfill up to 365 days for range-based
+metrics.
 
 ## Metrics
 
@@ -11,11 +12,15 @@ Grafana. It is a recent-window sync, not a full Garmin archive.
 | `garmin_hrv` | `last_night_avg_ms`, `weekly_avg_ms`, `last_night_5min_high_ms` | Local midnight of the day |
 | `garmin_daily_hr` | `resting_bpm`, `min_bpm`, `max_bpm` | Local midnight of the day |
 | `garmin_heart_rate` | `bpm` | Original sample timestamp (UTC) |
-| `garmin_steps` | `steps` | Local midnight of the day |
+| `garmin_steps` | `steps`, `step_goal` | Local midnight of the day |
+| `garmin_sleep` | `sleep_seconds`, `deep_seconds`, `light_seconds`, `rem_seconds`, `awake_seconds`, `sleep_score`, `bedtime_local_ms`, `wake_local_ms` | Local midnight of the wake date |
+| `garmin_daily_summary` | `calories_active`, `calories_resting`, `heart_rate_resting`, `intensity_moderate`, `intensity_vigorous`, `stress_avg`, `body_battery_latest`, `spo2_avg` | Local midnight of the day |
+| `garmin_activity` | `duration_seconds`, `distance_m`, `calories`, `average_hr`, `max_hr`, `steps`; tag `activity_type` | Activity start timestamp (UTC) |
 
 Daily points are stamped at midnight in the configured `TZ`. Re-syncing the
-same day overwrites the same timestamps, so the sync is idempotent. No tags are
-added: this service is designed for one Garmin account per bucket.
+same day overwrites the same timestamps, so the sync is idempotent.
+`garmin_activity` is the only tagged measurement; the others are designed for
+one Garmin account per bucket.
 
 ## Requirements
 
@@ -100,6 +105,21 @@ waiting the full interval, so a slow InfluxDB start does not cost six hours.
 Garmin data only becomes available after your watch has synced to Garmin
 Connect.
 
+## Historical backfill
+
+Polling refreshes only the last `SYNC_DAYS` days. To populate the year-long
+panels, run a one-off backfill:
+
+```bash
+docker compose run --rm garmin-sync python sync.py --backfill 365
+```
+
+This imports sleep, daily summaries, HRV, steps and activities for 365 days,
+plus 30 days of heart-rate samples and daily heart rate to stay rate-limit
+friendly. The command is idempotent and can take several minutes. If Garmin
+answers `429`, wait a few minutes and rerun it; already-written days are
+overwritten, not duplicated.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
@@ -125,8 +145,8 @@ from(bucket: "garmin")
   |> filter(fn: (r) => r._field == "last_night_avg_ms")
 ```
 
-Other useful measurements are `garmin_daily_hr`, `garmin_heart_rate` and
-`garmin_steps`.
+Other useful measurements are `garmin_daily_hr`, `garmin_heart_rate`,
+`garmin_steps`, `garmin_sleep`, `garmin_daily_summary` and `garmin_activity`.
 
 ## Docker image
 
@@ -165,10 +185,11 @@ cached in the `garmin_auth` volume mounted at
 
 ## Limitations and troubleshooting
 
-- **Not an archive:** only the last `SYNC_DAYS` days are refreshed. Increase it
-  temporarily for a backfill, up to 31 days, and respect Garmin rate limits.
-- **Not everything is imported:** activities, FIT files, sleep, body battery,
-  SpO2, stress and calories are out of scope.
+- **Recent polling, optional backfill:** each cycle refreshes only the last
+  `SYNC_DAYS` days (1..31). Use `--backfill` for up to 365 days of range
+  metrics; heart-rate samples are backfilled 30 days.
+- **Not everything is imported:** FIT files, food/protein, lifting sets,
+  daylight, sound and wrist temperature are not available through this bridge.
 - **Evolving response shapes:** missing or unsupported fields are skipped with
   a warning instead of being invented.
 - **`401` / `403`:** the API key may have been revoked. The client caches its

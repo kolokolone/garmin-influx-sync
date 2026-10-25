@@ -1,0 +1,33 @@
+# Garmin -> InfluxDB sync service.
+#
+# Standalone use: create garmin.env and point INFLUX_URL at a reachable
+# InfluxDB. To integrate with an existing monitoring stack, copy the
+# garmin-sync service into that stack's Compose file and keep the shared
+# garmin_auth volume.
+services:
+  garmin-sync:
+    build: .
+    image: ghcr.io/kolokolone/garmin-influx-sync:latest
+    container_name: garmin-sync
+    restart: unless-stopped
+
+    env_file:
+      - ./garmin.env
+
+    environment:
+      TZ: Europe/Paris
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_ORG: homelab
+      INFLUX_BUCKET: garmin
+      SYNC_DAYS: "3"
+      POLL_SECONDS: "21600"
+
+    volumes:
+      - garmin_auth:/home/app/.config/garmin
+
+    # Uncomment only when InfluxDB is a service in the same Compose project.
+    # depends_on:
+    #   - influxdb
+
+volumes:
+  garmin_auth:

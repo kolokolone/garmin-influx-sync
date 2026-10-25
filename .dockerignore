@@ -1,0 +1,15 @@
+.git
+.github
+.gitignore
+.dockerignore
+README.md
+compose.yaml
+garmin.env*
+tests
+__pycache__
+*.py[cod]
+.venv
+venv
+.pytest_cache
+.ruff_cache
+*.log

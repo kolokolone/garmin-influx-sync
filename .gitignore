@@ -1,0 +1,24 @@
+# Credentials: create garmin.env from garmin.env.example and never commit it.
+garmin.env
+garmin.env.*
+!garmin.env.example
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

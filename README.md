@@ -148,9 +148,8 @@ The container runs as a non-root user (UID 1000). The Garmin bearer token is
 cached in the `garmin_auth` volume mounted at
 `/home/app/.config/garmin`, never inside the image.
 
-> GHCR packages created from a public repository may initially be private.
-> If `docker pull` returns an authorization error, open the package settings on
-> GitHub and change its visibility to public.
+> The workflow publishes to `ghcr.io/<owner>/<repository>`. If you fork this
+> project, update the image name in `compose.yaml` or use the local build.
 
 ## Security notes
 

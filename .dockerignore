@@ -2,9 +2,9 @@
 .github
 .gitignore
 .dockerignore
-README.md
 compose.yaml
 garmin.env*
+docs
 tests
 __pycache__
 *.py[cod]

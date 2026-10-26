@@ -2,8 +2,16 @@
 
 Small Docker service that pulls recent Garmin Connect health metrics through
 Garmin's official **Personal API** and writes them to **InfluxDB 2.x** for
-Grafana. It polls recent days and can backfill up to 365 days for range-based
-metrics.
+Grafana. It refreshes recent days on a configurable interval and backfills up to
+365 days of history on first start.
+
+Version: **0.1.0** — see [CHANGELOG.md](CHANGELOG.md).
+
+Documentation:
+
+- [Architecture, lifecycle and storage schema](docs/architecture.md)
+- [Every Garmin Personal API endpoint the bridge can reach](docs/garmin-endpoints.md)
+- [Heart-rate heatmap panel audit](docs/dashboard-heart-rate-heatmap.md)
 
 ## Metrics
 
@@ -16,6 +24,7 @@ metrics.
 | `garmin_sleep` | `sleep_seconds`, `deep_seconds`, `light_seconds`, `rem_seconds`, `awake_seconds`, `sleep_score`, `bedtime_local_ms`, `wake_local_ms` | Local midnight of the wake date |
 | `garmin_daily_summary` | `calories_active`, `calories_resting`, `heart_rate_resting`, `intensity_moderate`, `intensity_vigorous`, `stress_avg`, `body_battery_latest`, `spo2_avg` | Local midnight of the day |
 | `garmin_activity` | `duration_seconds`, `distance_m`, `calories`, `average_hr`, `max_hr`, `steps`; tag `activity_type` | Activity start timestamp (UTC) |
+| `garmin_sync_state` | `backfill_completed`, `backfill_days` | Backfill completion timestamp (UTC) |
 
 Daily points are stamped at midnight in the configured `TZ`. Re-syncing the
 same day overwrites the same timestamps, so the sync is idempotent.
@@ -99,25 +108,41 @@ docker compose up -d --build
 docker logs -f garmin-sync
 ```
 
-The first cycle runs immediately, then every `POLL_SECONDS` (six hours by
-default). If a cycle fails, the service retries after 5 minutes instead of
-waiting the full interval, so a slow InfluxDB start does not cost six hours.
-Garmin data only becomes available after your watch has synced to Garmin
-Connect.
+The first cycle runs immediately, then every `REFRESH_INTERVAL` (six hours by
+default; `12h`, `1d`, `90m` and plain seconds also work). If a cycle fails, the
+service retries after 5 minutes instead of waiting the full interval, so a slow
+InfluxDB start does not cost six hours. Garmin data only becomes available after
+your watch has synced to Garmin Connect.
 
 ## Historical backfill
 
-Polling refreshes only the last `SYNC_DAYS` days. To populate the year-long
-panels, run a one-off backfill:
+Polling refreshes only the last `SYNC_DAYS` days. The year-long history is
+downloaded **once, automatically**, by `BACKFILL`:
+
+| `BACKFILL` | Behaviour |
+| --- | --- |
+| `auto` (default) | backfill `BACKFILL_DAYS` when the bucket is still empty; skip if it already holds Garmin data |
+| `on` | backfill `BACKFILL_DAYS` when no backfill has been recorded yet, even if the bucket holds data |
+| `off` | never backfill; only the last `SYNC_DAYS` days are refreshed |
+
+A completed backfill writes `garmin_sync_state.backfill_completed` into the
+bucket, so restarting the service — or leaving `BACKFILL=on` forever — never
+downloads the same history twice. Writes are idempotent anyway: daily points are
+stamped at local midnight, so a re-run overwrites instead of duplicating.
+
+This imports sleep, daily summaries, HRV, steps and activities for
+`BACKFILL_DAYS` (365 by default), plus `BACKFILL_HR_DAYS` (30 by default) of
+heart-rate samples and daily heart rate to stay rate-limit friendly.
+
+To force or widen a backfill (for example after raising `BACKFILL_HR_DAYS` to
+365 for the year-long heart-rate heatmap), run it explicitly — it ignores the
+marker and records a new one on success:
 
 ```bash
-docker compose run --rm garmin-sync python sync.py --backfill 365
+docker compose run --rm garmin-sync garmin-influx-sync --backfill 365
 ```
 
-This imports sleep, daily summaries, HRV, steps and activities for 365 days,
-plus 30 days of heart-rate samples and daily heart rate to stay rate-limit
-friendly. The command is idempotent and can take several minutes. If Garmin
-answers `429`, wait a few minutes and rerun it; already-written days are
+If Garmin answers `429`, wait a few minutes and rerun; already-written days are
 overwritten, not duplicated.
 
 ## Configuration
@@ -130,7 +155,10 @@ overwritten, not duplicated.
 | `INFLUX_ORG` | no | `homelab` | InfluxDB organization |
 | `INFLUX_BUCKET` | no | `garmin` | Destination bucket |
 | `SYNC_DAYS` | no | `3` | Days refreshed per cycle, from 1 to 31 |
-| `POLL_SECONDS` | no | `21600` | Seconds between cycles, at least 900 |
+| `REFRESH_INTERVAL` | no | `6h` | Delay between cycles: `15m`, `6h`, `12h`, `1d` or seconds; at least 15 minutes |
+| `BACKFILL` | no | `auto` | `auto`, `on` or `off` (see [historical backfill](#historical-backfill)) |
+| `BACKFILL_DAYS` | no | `365` | History depth for range metrics, 1 to 365 |
+| `BACKFILL_HR_DAYS` | no | `30` | Heart-rate sample days per backfill, 1 to 365 (one request per day) |
 | `TZ` | no | `Europe/Paris` | IANA timezone used for daily points and dates |
 
 ## Grafana
@@ -185,9 +213,11 @@ cached in the `garmin_auth` volume mounted at
 
 ## Limitations and troubleshooting
 
-- **Recent polling, optional backfill:** each cycle refreshes only the last
-  `SYNC_DAYS` days (1..31). Use `--backfill` for up to 365 days of range
-  metrics; heart-rate samples are backfilled 30 days.
+- **Recent polling, automatic backfill:** each cycle refreshes only the last
+  `SYNC_DAYS` days (1..31); history comes from a single marker-guarded backfill.
+  Heart-rate samples are backfilled `BACKFILL_HR_DAYS` deep (30 by default)
+  because Garmin serves them one request per day. A backfill day that fails is
+  logged and not retried automatically — rerun `--backfill` to fill it.
 - **Not everything is imported:** FIT files, food/protein, lifting sets,
   daylight, sound and wrist temperature are not available through this bridge.
 - **Evolving response shapes:** missing or unsupported fields are skipped with
@@ -196,7 +226,8 @@ cached in the `garmin_auth` volume mounted at
   bearer token in the `garmin_auth` volume and normally refreshes it before
   expiry; to force a fresh token, remove that volume (for example
   `docker volume rm <compose-project>_garmin_auth`) and restart.
-- **`429`:** increase `POLL_SECONDS`.
+- **`429`:** increase `REFRESH_INTERVAL`, and lower `BACKFILL_HR_DAYS` when
+  backfilling heart rate.
 - **InfluxDB connection errors:** check `INFLUX_URL`, the Compose network and
   whether InfluxDB is running.
 - **No points for a day:** the watch may not have uploaded yet; check the
@@ -209,12 +240,22 @@ cached in the `garmin_auth` volume mounted at
 ```bash
 python -m venv .venv
 . .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-The tests exercise configuration parsing and point building without calling
-Garmin or InfluxDB.
+The tests exercise configuration parsing, point building, the backfill decision
+table and the refresh schedule without calling Garmin or InfluxDB.
+
+Run the service locally with your own `garmin.env`:
+
+```bash
+GARMIN_PERSONAL_API_KEY=… INFLUX_TOKEN=… garmin-influx-sync
+```
+
+Package layout: `src/` is the import root (see
+[docs/architecture.md](docs/architecture.md#layout)); `garmin/` reads,
+`influx/` writes, `service/` decides when.
 
 ## Sources
 

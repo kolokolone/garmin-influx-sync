@@ -20,7 +20,16 @@ services:
       INFLUX_ORG: homelab
       INFLUX_BUCKET: garmin
       SYNC_DAYS: "3"
-      POLL_SECONDS: "21600"
+      # Delay between refreshes: 15m, 6h, 12h, 1d or plain seconds.
+      REFRESH_INTERVAL: "6h"
+      # auto: backfill once when the bucket is still empty (first start).
+      # on:   backfill once even if the bucket already holds data.
+      # off:  never backfill; only the last SYNC_DAYS days are refreshed.
+      # A completed backfill is recorded in the garmin_sync_state measurement,
+      # so restarting the service never downloads the same history twice.
+      BACKFILL: "auto"
+      BACKFILL_DAYS: "365"
+      BACKFILL_HR_DAYS: "30"
 
     volumes:
       - garmin_auth:/home/app/.config/garmin

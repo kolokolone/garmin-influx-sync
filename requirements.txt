@@ -1,3 +1,0 @@
-garmin-connect-personal-api-python==1.0.0
-influxdb-client==1.50.0
-tzdata==2026.5

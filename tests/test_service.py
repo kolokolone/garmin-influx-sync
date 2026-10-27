@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from contextlib import contextmanager
+from datetime import date, datetime
 from unittest import mock
 
 from support import FakeWriter
@@ -17,7 +18,7 @@ from service.backfill import (
     query_has_records,
     run_backfill,
 )
-from service.schedule import next_delay
+from service.schedule import next_delay, refresh_window
 
 writer.RANGE_DELAY_SECONDS = 0
 writer.DAY_DELAY_SECONDS = 0
@@ -212,6 +213,32 @@ class RunBackfillTests(unittest.TestCase):
 
 
 class RefreshScheduleTests(unittest.TestCase):
+    def test_refresh_window_adds_three_hours_to_the_interval(self) -> None:
+        settings = _settings(SYNC_DAYS="1", REFRESH_INTERVAL="6h")
+        now = datetime(2026, 10, 27, 2, 30, tzinfo=settings.local_tz)
+
+        start, end = refresh_window(settings, now)
+
+        # 6h interval + 3h overlap = 9h before 02:30, i.e. the previous day.
+        self.assertEqual((start, end), (date(2026, 10, 26), date(2026, 10, 27)))
+
+    def test_refresh_window_keeps_sync_days_when_wider(self) -> None:
+        settings = _settings(SYNC_DAYS="3")
+        now = datetime(2026, 10, 27, 2, 30, tzinfo=settings.local_tz)
+
+        start, end = refresh_window(settings, now)
+
+        self.assertEqual((start, end), (date(2026, 10, 25), date(2026, 10, 27)))
+
+    def test_refresh_window_uses_the_longer_interval(self) -> None:
+        settings = _settings(SYNC_DAYS="1", REFRESH_INTERVAL="1d")
+        now = datetime(2026, 10, 27, 2, 30, tzinfo=settings.local_tz)
+
+        start, end = refresh_window(settings, now)
+
+        # 24h + 3h = 27h before 02:30, i.e. two calendar days back.
+        self.assertEqual((start, end), (date(2026, 10, 25), date(2026, 10, 27)))
+
     def test_next_delay_uses_interval_and_fast_retry(self) -> None:
         daily = _settings(REFRESH_INTERVAL="1d")
         self.assertEqual(next_delay(daily, succeeded=True), 86_400)

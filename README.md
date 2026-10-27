@@ -5,7 +5,7 @@ Garmin's official **Personal API** and writes them to **InfluxDB 2.x** for
 Grafana. It refreshes recent days on a configurable interval and backfills up to
 365 days of history on first start.
 
-Version: **0.1.0** — see [CHANGELOG.md](CHANGELOG.md).
+Version: **0.1.1** — see [CHANGELOG.md](CHANGELOG.md).
 
 Documentation:
 
@@ -109,7 +109,9 @@ docker logs -f garmin-sync
 ```
 
 The first cycle runs immediately, then every `REFRESH_INTERVAL` (six hours by
-default; `12h`, `1d`, `90m` and plain seconds also work). If a cycle fails, the
+default; `12h`, `1d`, `90m` and plain seconds also work). Each cycle re-reads
+the wider of `SYNC_DAYS` and `REFRESH_INTERVAL + 3 hours`, so a late cycle still
+overlaps the previous one and does not skip a date. If a cycle fails, the
 service retries after 5 minutes instead of waiting the full interval, so a slow
 InfluxDB start does not cost six hours. Garmin data only becomes available after
 your watch has synced to Garmin Connect.
@@ -176,6 +178,27 @@ from(bucket: "garmin")
 Other useful measurements are `garmin_daily_hr`, `garmin_heart_rate`,
 `garmin_steps`, `garmin_sleep`, `garmin_daily_summary` and `garmin_activity`.
 
+### Body Ops dashboard
+
+[`dashboards/garmin-body-ops.json`](dashboards/garmin-body-ops.json) is an
+importable copy of the dashboard built for this bridge. The year heart-rate
+heatmap uses the Business Charts plugin:
+
+```bash
+docker exec grafana /usr/share/grafana/bin/grafana cli \
+  plugins install volkovlabs-echarts-panel 7.2.5
+docker restart grafana
+```
+
+Import the JSON from **Dashboards → New → Import** (or `POST` it to
+`/api/dashboards/db`). The panels reference the InfluxDB data source by UID
+`influxdb`; remap it on import if your instance uses another UID. The
+sleep-stages panel uses an **Organize fields**
+transformation to keep the stack order deep → REM → light → awake regardless of
+the alphabetical field order returned by InfluxDB. See
+[docs/dashboard-heart-rate-heatmap.md](docs/dashboard-heart-rate-heatmap.md)
+for the query, panel code and the source-retention limit.
+
 ## Docker image
 
 The workflow in `.github/workflows/docker.yml` runs the unit tests and builds a
@@ -213,11 +236,15 @@ cached in the `garmin_auth` volume mounted at
 
 ## Limitations and troubleshooting
 
-- **Recent polling, automatic backfill:** each cycle refreshes only the last
-  `SYNC_DAYS` days (1..31); history comes from a single marker-guarded backfill.
-  Heart-rate samples are backfilled `BACKFILL_HR_DAYS` deep (30 by default)
-  because Garmin serves them one request per day. A backfill day that fails is
-  logged and not retried automatically — rerun `--backfill` to fill it.
+- **Recent polling, automatic backfill:** each cycle refreshes the wider of
+  `SYNC_DAYS` days (1..31) and `REFRESH_INTERVAL + 3 hours`; history comes from
+  a single marker-guarded backfill. Heart-rate samples are backfilled
+  `BACKFILL_HR_DAYS` deep (30 by default) because Garmin serves them one
+  request per day. Garmin only returns intraday samples for roughly the last
+  150 days; older dates keep the daily resting/min/max aggregate but have an
+  empty `heartRateValues` list, so a deeper backfill does not add heatmap
+  cells. A backfill day that fails is logged and not retried automatically —
+  rerun `--backfill` to fill it.
 - **Not everything is imported:** FIT files, food/protein, lifting sets,
   daylight, sound and wrist temperature are not available through this bridge.
 - **Evolving response shapes:** missing or unsupported fields are skipped with

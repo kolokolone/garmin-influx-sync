@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-27
+
+Patch release: the year heart-rate heatmap panel, a stable sleep-stage order,
+and a three-hour overlap on the refresh window.
+
+### Added
+
+- `dashboards/garmin-body-ops.json`: an importable Body Ops dashboard with the
+  year heart-rate heatmap (Business Charts / ECharts), the fixed sleep-stage
+  panel and the existing daily panels.
+- The refresh window now covers the wider of `SYNC_DAYS` and
+  `REFRESH_INTERVAL + 3 hours`, so a late or retried cycle still overlaps the
+  previous one and does not skip a local date.
+- `refresh_window()` is exported by `service.schedule` and unit-tested.
+
+### Fixed
+
+- Sleep stages stack in a fixed order, deep → REM → light → awake, using an
+  **Organize fields** transformation instead of the alphabetical field order
+  returned by InfluxDB.
+- The heatmap query in `docs/dashboard-heart-rate-heatmap.md` no longer passes
+  an invalid `location: {zone: …}` record to `date.hour`; `option location`
+  provides the timezone and keeps DST correct.
+
+### Changed
+
+- Documented Garmin's intraday heart-rate retention: the daily endpoint returns
+  `heartRateValues` for roughly 150 days (2026-06-01 onward for this account);
+  older dates only carry the daily resting/min/max aggregate. A 365-day
+  backfill still populates `garmin_daily_hr` for the year.
+- The heatmap panel keeps one calendar cell per day, including empty months,
+  and aligns hourly windows to `Europe/Paris`.
+
 ## [0.1.0] - 2026-10-26
 
 First minor release: automatic history download, configurable refresh interval,
@@ -65,5 +98,6 @@ Initial release.
 - Bearer-token caching in the `garmin_auth` volume, non-root container image,
   multi-architecture CI publish to GHCR and unit tests.
 
+[0.1.1]: https://github.com/kolokolone/garmin-influx-sync/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kolokolone/garmin-influx-sync/releases/tag/v0.1.0
 [0.0.1]: https://github.com/kolokolone/garmin-influx-sync/releases/tag/v0.0.1

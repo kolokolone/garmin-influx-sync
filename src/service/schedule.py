@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from config import Settings
 from garmin.connection import garmin_session
@@ -16,12 +16,31 @@ from util import describe_error
 LOG = logging.getLogger("garmin-influx-sync")
 
 RETRY_SECONDS = 300
+# Extra overlap added to one refresh interval, so a late cycle (or a retry)
+# still re-reads the daily endpoints across the midnight boundary.
+REFRESH_OVERLAP_SECONDS = 3 * 3_600
 
 
-def run_cycle(settings: Settings) -> None:
-    """Refresh the last ``SYNC_DAYS`` days once."""
-    today = datetime.now(settings.local_tz).date()
-    start = today - timedelta(days=settings.sync_days - 1)
+def refresh_window(settings: Settings, now: datetime) -> tuple[date, date]:
+    """Return the inclusive local date range refreshed by one cycle.
+
+    ``SYNC_DAYS`` is the floor. The window is widened to cover at least the
+    whole ``REFRESH_INTERVAL`` plus ``REFRESH_OVERLAP_SECONDS`` before ``now``,
+    so two consecutive cycles always overlap and no date is skipped when a
+    cycle starts late.
+    """
+    today = now.date()
+    sync_start = today - timedelta(days=settings.sync_days - 1)
+    overlap_start = (
+        now - timedelta(seconds=settings.refresh_seconds + REFRESH_OVERLAP_SECONDS)
+    ).date()
+    return min(sync_start, overlap_start), today
+
+
+def run_cycle(settings: Settings, now: datetime | None = None) -> None:
+    """Refresh one cycle's local date range once."""
+    now = now or datetime.now(settings.local_tz)
+    start, today = refresh_window(settings, now)
 
     with garmin_session(settings) as garmin, influx_session(settings) as influx:
         writer = writer_for(influx)

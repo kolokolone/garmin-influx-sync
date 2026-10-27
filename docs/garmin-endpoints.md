@@ -21,7 +21,7 @@ Garmin as a convenience and may lag behind the API.
 
 ## Endpoint table
 
-`Ingested` says whether v0.1.0 stores it. Measurements live in
+`Ingested` says whether v0.1.1 stores it. Measurements live in
 [architecture.md](architecture.md#measurements).
 
 | # | Dataset | Wrapper | HTTP endpoint | Window | Ingested | Notes |
@@ -37,7 +37,7 @@ Garmin as a convenience and may lag behind the API.
 | 9 | Sleep summaries | `get_daily_sleep_summaries` | `/sleep-service/sleep/dailySleepSummariesByDate?startDate=&endDate=` | range | **`garmin_sleep`** | what backfill uses |
 | 10 | Body Battery | `get_daily_body_battery` | `/wellness-service/wellness/bodyBattery/reports/daily?startDate=&endDate=[&chunks=]` | range | no | only min/max/latest via daily summaries |
 | 11 | Daily summaries | `get_daily_summaries` | `/usersummary-service/v2/dailysummaries?startDate=&endDate=` | range | **`garmin_daily_summary`** | calories, intensity, stress, body battery, respiration, pulse ox |
-| 12 | Daily heart rate | `get_daily_heart_rate` | `/wellness-service/wellness/dailyHeartRate?date={date}` | day | **`garmin_heart_rate`**, **`garmin_daily_hr`** | `heartRateValues` = `[[epoch_ms, bpm], …]` ≈ 2-min cadence; **one request per day** |
+| 12 | Daily heart rate | `get_daily_heart_rate` | `/wellness-service/wellness/dailyHeartRate?date={date}` | day | **`garmin_heart_rate`**, **`garmin_daily_hr`** | `heartRateValues` = `[[epoch_ms, bpm], …]` ≈ 2-min cadence; **one request per day**; intraday samples are retained for only ≈150 days — older dates return an empty list but keep `resting/min/maxHeartRate` |
 | 13 | HRV (detailed) | `get_daily_hrv` | `/hrv-service/hrv/{date}` | day | no | 5-minute HRV readings |
 | 14 | HRV summaries | `get_daily_hrv_summaries` | `/hrv-service/hrv/daily/{start}/{end}` | range | **`garmin_hrv`** | `lastNightAvg`, `weeklyAvg`, `lastNight5MinHigh` |
 | 15 | Heart-rate zones | `get_heart_rate_zones` | `/biometric-service/heartRateZones/v2` | — | no | static-ish, good for banding panel colours |
@@ -65,7 +65,10 @@ Everything else is JSON: the bridge downloads *data*, not files.
 
 - **No bulk heart-rate endpoint.** Samples come one calendar day at a time,
   which is why the bridge keeps `BACKFILL_HR_DAYS` (default 30) separate from
-  `BACKFILL_DAYS` (default 365).
+  `BACKFILL_DAYS` (default 365). The endpoint also stops returning
+  `heartRateValues` after roughly 150 days: a 365-day backfill succeeds but
+  older days only contain the daily aggregate. Check the raw payload before
+  raising the window.
 - **Pagination.** Activity search is the only paged endpoint; the bridge stops
   at `MAX_ACTIVITY_PAGES` (50 pages × 20 = 1000 activities per range).
 - **Pacing.** Garmin answers `429` when hammered. The bridge spaces range

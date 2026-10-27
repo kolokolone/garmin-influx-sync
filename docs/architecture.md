@@ -1,6 +1,6 @@
 # Architecture
 
-Current state: **v0.1.0** (see [CHANGELOG](../CHANGELOG.md)). This document
+Current state: **v0.1.1** (see [CHANGELOG](../CHANGELOG.md)). This document
 describes how the bridge is built, where each responsibility lives, and how a
 single run flows from Garmin to InfluxDB.
 
@@ -32,6 +32,7 @@ service is stateless apart from the bearer-token cache and the backfill marker.
 │       ├── backfill.py      first-sync detection, history download, marker
 │       └── schedule.py      refresh interval, retries, service loop
 ├── tests/                   unittest suite (no network, no credentials)
+├── dashboards/              importable Body Ops dashboard (JSON)
 └── docs/                    this document, endpoint inventory, panel audits
 ```
 
@@ -102,6 +103,10 @@ refresh loop starts anyway; the next restart retries the detection.
 ### Steady state: refresh
 
 `run_cycle()` re-reads the last `SYNC_DAYS` days (1..31) and rewrites them.
+The window is also widened to cover at least `REFRESH_INTERVAL` plus a
+three-hour overlap before the current time. `SYNC_DAYS` remains the floor, so
+the default (three days) is unchanged; with a short `SYNC_DAYS`, a late cycle
+still re-reads the previous day instead of skipping the midnight boundary.
 `REFRESH_INTERVAL` accepts `6h`, `12h`, `1d`, `90m` or plain seconds; the
 default is `6h` and the minimum 15 minutes. A failed cycle (any heart-rate day
 failed) is retried after `min(REFRESH_INTERVAL, 300s)` instead of waiting the
@@ -175,7 +180,9 @@ metric values are never logged, and API error bodies are truncated.
   timelines, daylight/sound/wrist temperature are reachable through the API but
   not ingested yet — see [garmin-endpoints.md](garmin-endpoints.md).
 - Heart-rate samples are only backfilled for `BACKFILL_HR_DAYS`, by design:
-  it costs one request per day.
+  it costs one request per day, and Garmin returns `heartRateValues` for only
+  about the last 150 days. Older dates keep `garmin_daily_hr` but add no sample
+  points, so a deeper backfill does not extend the year-long heatmap.
 - Activities are paged at 20 per request, 50 pages maximum per backfill.
 - A failed backfill day is not retried automatically once the marker is
   written; rerun `--backfill` for that.
